@@ -24,8 +24,9 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/system_error.h>
-
+#include <llvm//Analysis/LoopInfo.h>
 #include <llvm/Config/llvm-config.h>
+#include "llvm/PassManagers.h"
 
 #if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR > 3
   #error "LLVM 4.0 and greater are not supported"
@@ -509,7 +510,7 @@ static void disposeData(ValueTag t, void* data) {
 
     free(fi->arguments);
     free(fi->body);
-
+	free(fi->loops);
     free(fi);
     return;
   }
@@ -719,6 +720,7 @@ static CValue* translateValue(CModule *m, const Value *v);
 static CValue* translateBasicBlock(CModule *m, const BasicBlock *bb);
 static CMeta* translateMetadata(CModule *m, const MDNode *md);
 static CMeta* translateMetadataArray(CModule *m, const MDNode *md);
+static CLoop* translateLoop(CModule *m, const Loop* loop);
 
 static void makeMetaSrcLocation(CModule *m, const DebugLoc &loc, CMeta *meta) {
   meta->u.metaLocationInfo.lineNumber = loc.getLine();
@@ -1985,8 +1987,62 @@ static CValue* translateFunction(CModule *m, const Function *f) {
   {
     fi->body[idx++] = translateBasicBlock(m, &*it);
   }
+ //TODO: Translate loops
+  llvm::LoopInfo LI;
+  LI.runOnFunction(*(const_cast<Function*>(f)));//llvm::BasicBlockPass::getAnalysis<LoopInfo>(f); //TODO: Doublecheck this!
+  //might need to call runOnFunction and pass in the function.
+  fi->numLoops = LI.begin()-LI.end();
+  fi->loops = (CLoop**)calloc(fi->numLoops, sizeof(CLoop*));
+  int index = 0;
+  for (LoopInfo::iterator i = LI.begin(), e = LI.end(); i != e; ++i) {
+    CLoop* loop = translateLoop(m, *i);
+    fi->loops[index++] = loop;
+  }
 
   return v;
+}
+
+static CLoop* translateLoop(CModule *m, const Loop* loop){
+  if(loop == NULL) return NULL;
+  SmallVector<BasicBlock *, 4> exitingBlocks;
+  loop->getExitingBlocks(exitingBlocks);
+  SmallVector<BasicBlock*, 4> uniqueExitBlocks;
+  loop->getUniqueExitBlocks(uniqueExitBlocks);
+  std::vector<Loop*> subLoops = loop->getSubLoops();
+  CLoop* toReturn = (CLoop*)calloc(1, sizeof(CLoop));
+  toReturn->numUniqueExitBlocks = uniqueExitBlocks.size();
+  toReturn->canonicalInductionVariable = (CValue*)calloc(1, sizeof(CValue));
+  buildPHINode(m, toReturn->canonicalInductionVariable, loop->getCanonicalInductionVariable());
+  toReturn->numBlocks = loop->getNumBlocks();
+  toReturn->isLoopSimplifyForm = loop->isLoopSimplifyForm();
+  toReturn->isSafeToClone = loop->isSafeToClone();
+  toReturn->hasDedicatedExits = loop->hasDedicatedExits();
+  toReturn->isAnnotatedParallel = loop->isAnnotatedParallel();
+  toReturn->loopDepth = loop->getLoopDepth();
+  toReturn->parentLoop = translateLoop(m, loop->getParentLoop());
+  toReturn->numExitingBlocks = exitingBlocks.size();
+  toReturn->numSubLoops = subLoops.size();
+  toReturn->exitingBlocks = (CValue**)calloc(toReturn->numExitingBlocks,sizeof(CValue*));
+  int index = 0;
+  for(const auto block: exitingBlocks){
+    toReturn->exitingBlocks[index++] = translateBasicBlock(m, block);
+  }
+  toReturn->blocks = (CValue**)calloc(toReturn->numBlocks, sizeof(CValue*));
+  index = 0;
+  for(const auto block: loop->getBlocks()){
+    toReturn->blocks[index++] = translateBasicBlock(m, block);
+  }
+  toReturn->uniqueExitBlocks = (CValue**)calloc(toReturn->numUniqueExitBlocks,sizeof(CValue*));
+  index = 0;
+  for(const auto block: uniqueExitBlocks){
+    toReturn->uniqueExitBlocks[index++] = translateBasicBlock(m, block);
+  }
+  toReturn->subLoops = (CLoop**)calloc(toReturn->numSubLoops, sizeof(CLoop*));
+  index = 0;
+  for(const auto subLoop: subLoops){
+    toReturn->subLoops[index++] = translateLoop(m, subLoop);
+  }
+  return toReturn;
 }
 
 static CValue* translateGlobalVariable(CModule *m, const GlobalVariable *gv) {
@@ -2652,6 +2708,9 @@ extern "C" {
   }
 
   CModule* marshalLLVM(const char * buffer, int bufLen, int includeLocs) {
+  	ostringstream os;
+	os << "top of marshalLLVM";
+  	
     CModule *module = (CModule*)calloc(1, sizeof(CModule));
     PrivateData *pd = new PrivateData;
     module->privateData = (void*)pd;
@@ -2664,9 +2723,15 @@ extern "C" {
       module->errMsg = getCStrdup("Could not create memory buffer");
       return module;
     }
-
+  	os << "starting to make the module";
     Module *m = ParseIR(pd->buffer.get(), pd->diags, pd->ctxt);
-
+   	FPPassManager PM;
+   	LoopInfo pass;
+    PM.add(Pass::createPass(pass.getPassID()));
+    PM.runOnModule(*m);
+    
+  	os << "finishing the module";
+    /*Get pass manager, run passes*/
     if(m == NULL) {
       module->hasError = 1;
       module->errMsg = getCStrdup(pd->diags.getMessage());

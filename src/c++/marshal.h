@@ -4,6 +4,7 @@
 typedef struct CValue_t CValue;
 typedef struct CMeta_t CMeta;
 typedef struct CType_t CType;
+typedef struct CLoop_t CLoop;
 
 struct CType_t {
   TypeTag typeTag;
@@ -257,8 +258,31 @@ typedef struct {
   int argListLen;
   CValue **body;
   int blockListLen;
+  CLoop **loops;
+  int numLoops;
   // FIXME: Add attributes
 } CFunctionInfo;
+
+struct CLoop_t{
+  CValue* canonicalInductionVariable;
+  CValue** blocks;
+  CValue** exitingBlocks;
+  CValue** uniqueExitBlocks; //TODO: find out how this differs from exiting blocks.
+  CLoop* parentLoop;
+  CLoop** subLoops;
+
+  int loopDepth; //TODO: Need to figure out how to convert from unsigned to int.
+  int isLoopSimplifyForm;
+  int isSafeToClone;
+  int isAnnotatedParallel;
+  int hasDedicatedExits;
+  
+  int numSubLoops;
+  int numBlocks;
+  int numExitingBlocks;
+  int numUniqueExitBlocks; //TODO: Same as numExitingBlocks? Check this.
+  
+};
 
 typedef struct {
   int isExternal; // Declaration
