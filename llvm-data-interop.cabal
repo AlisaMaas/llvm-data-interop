@@ -23,6 +23,7 @@ Description: This package converts the LLVM IR (either bitcode files or LLVM
 extra-source-files: configure,
                     llvm-data-interop.buildinfo.in,
                     src/c++/marshal.h,
+                    src/c++/RetainLoopInfo.h,
                     README.md
 
 library
@@ -41,13 +42,13 @@ library
                  LLVM.Internal.TypeUnification
   exposed-modules: LLVM.Parse
   build-tools: c2hs
-  c-sources: src/c++/marshal.cpp
+  c-sources:src/c++/RetainLoopInfo.cpp, src/c++/marshal.cpp
   extra-libraries: stdc++
   ghc-options: -Wall
   ghc-prof-options: -auto-all
   include-dirs: src
   hs-source-dirs: src
-  cc-options: -fvisibility-inlines-hidden -fvisibility=hidden
+  cc-options: -g -fvisibility-inlines-hidden -fvisibility=hidden -fno-rtti
 
   if os(darwin)
-    cc-options: -std=c++11
+     cc-options: -std=c++11

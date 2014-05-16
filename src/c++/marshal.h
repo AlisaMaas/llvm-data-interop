@@ -1,11 +1,15 @@
+#ifndef MARSHAL_H
+#define MARSHAL_H
+#endif
 #include <stdint.h>
 #include "llvm-base-enums.h"
+#include <llvm//Analysis/LoopInfo.h>
 
 typedef struct CValue_t CValue;
 typedef struct CMeta_t CMeta;
 typedef struct CType_t CType;
 typedef struct CLoop_t CLoop;
-
+typedef struct CModule_t CModule;
 struct CType_t {
   TypeTag typeTag;
   // For TypeInt, lengths of TypeArray and TypeVector
@@ -267,11 +271,11 @@ struct CLoop_t{
   CValue* canonicalInductionVariable;
   CValue** blocks;
   CValue** exitingBlocks;
-  CValue** uniqueExitBlocks; //TODO: find out how this differs from exiting blocks.
+  CValue** uniqueExitBlocks; 
   CLoop* parentLoop;
   CLoop** subLoops;
 
-  int loopDepth; //TODO: Need to figure out how to convert from unsigned to int.
+  int loopDepth; 
   int isLoopSimplifyForm;
   int isSafeToClone;
   int isAnnotatedParallel;
@@ -280,7 +284,7 @@ struct CLoop_t{
   int numSubLoops;
   int numBlocks;
   int numExitingBlocks;
-  int numUniqueExitBlocks; //TODO: Same as numExitingBlocks? Check this.
+  int numUniqueExitBlocks; 
   
 };
 
@@ -412,7 +416,7 @@ struct CValue_t {
   void *data;
 };
 
-typedef struct {
+ struct CModule_t{
   char *moduleIdentifier;
   char *moduleDataLayout;
   char *targetTriple;
@@ -440,8 +444,7 @@ typedef struct {
   char *errMsg;
 
   void *privateData;
-} CModule;
-
+};
 #if defined(_WIN32) || defined(__CYGWIN__)
   #if defined(__GNUC__)
     #define DLL_PUBLIC __attribute__((dllexport))

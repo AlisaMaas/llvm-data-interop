@@ -1,8 +1,11 @@
 #define __STDC_LIMIT_MACROS
 #define __STDC_CONSTANT_MACROS
-
+#define DEBUG 0
+#define printf_d(...) if(DEBUG) printf(__VA_ARGS__)
+#include "RetainLoopInfo.h"
+#ifndef MARSHAL_H
 #include "marshal.h"
-
+#endif
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +14,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <stdio.h>
+#include <llvm/PassRegistry.h>
+#include <llvm/Support/Registry.h>
 #if defined(_LIBCPP_VERSION)
   #include <unordered_map>
 #else
@@ -26,7 +32,7 @@
 #include <llvm/Support/system_error.h>
 #include <llvm//Analysis/LoopInfo.h>
 #include <llvm/Config/llvm-config.h>
-#include "llvm/PassManagers.h"
+#include <llvm/PassManager.h>
 
 #if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR > 3
   #error "LLVM 4.0 and greater are not supported"
@@ -510,7 +516,6 @@ static void disposeData(ValueTag t, void* data) {
 
     free(fi->arguments);
     free(fi->body);
-	free(fi->loops);
     free(fi);
     return;
   }
@@ -1501,6 +1506,9 @@ static void buildCmpInst(CModule *m, CValue *v, ValueTag t, const Instruction *i
 }
 
 static void buildPHINode(CModule *m, CValue *v, const PHINode* n) {
+  if(n == NULL){
+  	return;
+  }
   v->valueTag = VAL_PHINODE;
   v->valueType = translateType(m, n->getType());
   if(n->hasName())
@@ -1512,7 +1520,6 @@ static void buildPHINode(CModule *m, CValue *v, const PHINode* n) {
   pi->numIncomingValues = n->getNumIncomingValues();
   pi->incomingValues = (CValue**)calloc(pi->numIncomingValues, sizeof(CValue*));
   pi->valueBlocks = (CValue**)calloc(pi->numIncomingValues, sizeof(CValue*));
-
   for(int i = 0; i < pi->numIncomingValues; ++i) {
     pi->incomingValues[i] = translateValue(m, n->getIncomingValue(i));
     pi->valueBlocks[i] = translateValue(m, n->getIncomingBlock(i));
@@ -1987,61 +1994,120 @@ static CValue* translateFunction(CModule *m, const Function *f) {
   {
     fi->body[idx++] = translateBasicBlock(m, &*it);
   }
- //TODO: Translate loops
-  llvm::LoopInfo LI;
-  LI.runOnFunction(*(const_cast<Function*>(f)));//llvm::BasicBlockPass::getAnalysis<LoopInfo>(f); //TODO: Doublecheck this!
-  //might need to call runOnFunction and pass in the function.
-  fi->numLoops = LI.begin()-LI.end();
-  fi->loops = (CLoop**)calloc(fi->numLoops, sizeof(CLoop*));
-  int index = 0;
-  for (LoopInfo::iterator i = LI.begin(), e = LI.end(); i != e; ++i) {
-    CLoop* loop = translateLoop(m, *i);
-    fi->loops[index++] = loop;
-  }
-
+  printf_d("About to translate Loops\n");
+  //TODO: Translate loops
+  PassRegistry &Registry = *PassRegistry::getPassRegistry();
+  initializeAnalysis(Registry);
+  printf_d("About to set up the FPPassManager\n");
+  FunctionPassManager PM(pd->original);
+  PM.doInitialization();
+  printf_d("About to get a RetainLoopInfo\n");
+  RetainLoopInfo* RLI = new RetainLoopInfo();
+  RLI->setModule(m);
+  printf_d("About to add the pass\n");
+  PM.add(RLI);
+  printf_d("Added pass\n");
+  bool b = PM.run(*(const_cast<Function*>(f)));
+  printf_d("Ran PassManager\n");
+  printf_d("Calling getters. . .\n");
+  fi->numLoops = RLI->getNumLoops();
+  fi->loops = RLI->getLoops();
+  printf("Found %d loops!\n", fi->numLoops);
+  printf_d("finished translating!\n");
   return v;
 }
 
-static CLoop* translateLoop(CModule *m, const Loop* loop){
+static CLoop* translateLoop(CModule *m, const Loop* loop, CLoop* parent){
+  printf_d("Top of translateLoop\n");
   if(loop == NULL) return NULL;
+  printf_d("Loop isn't null, or we would have returned.\n");
+  std::vector<Loop*> subLoops = loop->getSubLoops();
+  printf_d("Got subloops\n");
+  CLoop* toReturn = (CLoop*)calloc(1, sizeof(CLoop));
+  printf_d("Made a loop to return\n");
+  toReturn->hasDedicatedExits = loop->hasDedicatedExits();
+  printf_d("Got dedicated exits\n"); 
   SmallVector<BasicBlock *, 4> exitingBlocks;
   loop->getExitingBlocks(exitingBlocks);
+  printf_d("Got exiting blocks\n");
   SmallVector<BasicBlock*, 4> uniqueExitBlocks;
-  loop->getUniqueExitBlocks(uniqueExitBlocks);
-  std::vector<Loop*> subLoops = loop->getSubLoops();
-  CLoop* toReturn = (CLoop*)calloc(1, sizeof(CLoop));
+  printf_d("Starting unique exit blocks\n");
+  if(toReturn->hasDedicatedExits){
+  		printf_d("We have dedicated exits\n");
+  		loop->getUniqueExitBlocks(uniqueExitBlocks);
+  		printf_d("Got unique exit blocks\n");
+  }
+  printf_d("end dedicated exits\n");
   toReturn->numUniqueExitBlocks = uniqueExitBlocks.size();
+  printf_d("Got numUniqueExitBlocks\n");
   toReturn->canonicalInductionVariable = (CValue*)calloc(1, sizeof(CValue));
+  printf_d("Got canonical induction variable\n");
   buildPHINode(m, toReturn->canonicalInductionVariable, loop->getCanonicalInductionVariable());
+  if(loop->getCanonicalInductionVariable() == NULL){
+  	toReturn->canonicalInductionVariable = NULL;
+  }
+  printf_d("Got a PHI node\n");
   toReturn->numBlocks = loop->getNumBlocks();
+  printf_d("Got numBlocks\n");
   toReturn->isLoopSimplifyForm = loop->isLoopSimplifyForm();
+  printf_d("Got loopSimplifyForm\n");
   toReturn->isSafeToClone = loop->isSafeToClone();
-  toReturn->hasDedicatedExits = loop->hasDedicatedExits();
+  printf_d("Got isSafeToClone\n");
   toReturn->isAnnotatedParallel = loop->isAnnotatedParallel();
+  printf_d("Got isAnnotatedParallel\n");
   toReturn->loopDepth = loop->getLoopDepth();
-  toReturn->parentLoop = translateLoop(m, loop->getParentLoop());
+  printf_d("Got LoopDepth: %d\n", toReturn->loopDepth);
+  toReturn->parentLoop = parent; //nice try. we need another way to get parents.
+  printf_d("Got parent loop!\n");
   toReturn->numExitingBlocks = exitingBlocks.size();
+  printf_d("Got numExitingBlocks: %d\n", toReturn->numExitingBlocks);
   toReturn->numSubLoops = subLoops.size();
+  printf_d("Got numSubLoops: %d\n", toReturn->numSubLoops);
   toReturn->exitingBlocks = (CValue**)calloc(toReturn->numExitingBlocks,sizeof(CValue*));
+  printf_d("Creating exiting blocks\n");
   int index = 0;
-  for(const auto block: exitingBlocks){
-    toReturn->exitingBlocks[index++] = translateBasicBlock(m, block);
+  for(SmallVector<BasicBlock *, 4>::iterator it = exitingBlocks.begin(); it != exitingBlocks.end(); it++){
+	BasicBlock* block = *it;
+	printf_d("About to add a translated basic block\n");
+	toReturn->exitingBlocks[index++] = translateBasicBlock(m, block);
+	printf_d("Added the basic block\n");
   }
+  printf_d("Added all the exiting blocks\n");
   toReturn->blocks = (CValue**)calloc(toReturn->numBlocks, sizeof(CValue*));
+  printf_d("Created room for blocks\n");
   index = 0;
-  for(const auto block: loop->getBlocks()){
-    toReturn->blocks[index++] = translateBasicBlock(m, block);
+  std::vector<BasicBlock*> blocks= loop->getBlocks();
+  printf_d("Grabbed the blocks\n");
+  for(std::vector<BasicBlock*>::iterator it = blocks.begin(); it != blocks.end(); it++){
+	BasicBlock* block = *it;
+	printf_d("About to translate a block\n");
+	toReturn->blocks[index++] = translateBasicBlock(m, block);
+	printf_d("Translated a block!\n");
   }
+  printf_d("Translated all the blocks!!\n");
   toReturn->uniqueExitBlocks = (CValue**)calloc(toReturn->numUniqueExitBlocks,sizeof(CValue*));
   index = 0;
-  for(const auto block: uniqueExitBlocks){
-    toReturn->uniqueExitBlocks[index++] = translateBasicBlock(m, block);
+  printf_d("About to go over the uniqueExitBlocks\n");
+  for(SmallVector<BasicBlock *, 4>::iterator it = uniqueExitBlocks.begin(); it != uniqueExitBlocks.end(); it++){
+	BasicBlock* block = *it;
+	printf_d("About to translate a basic block\n");
+	toReturn->uniqueExitBlocks[index++] = translateBasicBlock(m, block);
+	printf_d("Translated a basic block\n");
   }
+  printf_d("Finished the uniqueExitBlocks\n");
+
   toReturn->subLoops = (CLoop**)calloc(toReturn->numSubLoops, sizeof(CLoop*));
+  printf_d("Made room for the subloops!\n");
   index = 0;
-  for(const auto subLoop: subLoops){
-    toReturn->subLoops[index++] = translateLoop(m, subLoop);
+  for(std::vector<Loop*>::iterator it = subLoops.begin(); it != subLoops.end(); it++){
+	Loop* subLoop = *it;
+	printf_d("Got a subloop\n");
+	toReturn->subLoops[index++] = translateLoop(m, subLoop, toReturn);
+	printf_d("Translated a subloop\n");
   }
+  printf_d("Translated ALL the subloops!\n");
+  printf_d("Done with this loop, returning!!!\n");
+
   return toReturn;
 }
 
@@ -2695,6 +2761,17 @@ extern "C" {
     Module *m = ParseIRFile(filename, pd->diags, pd->ctxt);
     pd->dataLayout = new DataLayout(m);
 
+
+	/*printf("About to set up the FPPassManager\n");
+   	FunctionPassManager PM;
+	printf("About to get a LoopInfo");
+   	LoopInfo pass;
+	printf("About to get the passID");
+    PM.add(Pass::createPass(pass.getPassID()));
+	printf("Added LoopInfo pass\n");
+    PM.runOnModule(*m);
+	printf("Ran PassManager\n");*/
+
     if(m == NULL) {
       module->hasError = 1;
       module->errMsg = getCStrdup(pd->diags.getMessage());
@@ -2708,13 +2785,9 @@ extern "C" {
   }
 
   CModule* marshalLLVM(const char * buffer, int bufLen, int includeLocs) {
-  	ostringstream os;
-	os << "top of marshalLLVM";
-  	
     CModule *module = (CModule*)calloc(1, sizeof(CModule));
     PrivateData *pd = new PrivateData;
     module->privateData = (void*)pd;
-
     StringRef bref(buffer, bufLen);
     pd->buffer.reset(MemoryBuffer::getMemBuffer(bref, "", false));
 
@@ -2723,14 +2796,8 @@ extern "C" {
       module->errMsg = getCStrdup("Could not create memory buffer");
       return module;
     }
-  	os << "starting to make the module";
     Module *m = ParseIR(pd->buffer.get(), pd->diags, pd->ctxt);
-   	FPPassManager PM;
-   	LoopInfo pass;
-    PM.add(Pass::createPass(pass.getPassID()));
-    PM.runOnModule(*m);
-    
-  	os << "finishing the module";
+  	//os << "finishing the module";
     /*Get pass manager, run passes*/
     if(m == NULL) {
       module->hasError = 1;
