@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-{-# LANGUAGE FlexibleContexts, TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
 -- | This module defines a function to perform unification of LLVM types.
 --
 -- The unification step is intended to eliminate duplicate struct
@@ -56,7 +56,7 @@ import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import qualified Data.Text as T
 import Data.Word ( Word64 )
-import Debug.Trace.LocationTH
+-- import Debug.Trace.LocationTH
 import Foreign.Ptr
 import System.IO.Unsafe ( unsafePerformIO )
 
@@ -238,7 +238,7 @@ translateAndGroup tmap sizeMap structs tptr = do
           addrSpc <- cTypeAddrSpace tptr
           let innerType = delayedLookup tmap itp
           return $ TypePointer innerType addrSpc
-        TYPE_STRUCT -> $failure "Impossible, cannot have a struct here"
+        TYPE_STRUCT -> error {-$failure-} "Impossible, cannot have a struct here"
       HT.insert tmap ip t'
       return structs
 
@@ -255,7 +255,7 @@ delayedLookup tmap ptr = unsafePerformIO $ do
   res <- HT.lookup tmap $ fromIntegral (ptrToIntPtr ptr)
   return $ fromMaybe errMsg res
   where
-    errMsg = $failure ("Type lookup failure for " ++ show ptr)
+    errMsg = error {- $failure -} ("Type lookup failure for " ++ show ptr)
 
 -- | Perform a breadth-first search to discover all types referenced
 -- by the given input type list

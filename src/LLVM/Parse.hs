@@ -9,7 +9,6 @@
 -- LinearHashTable has less space overhead but makes performance tank.
 -- Don't be tempted.
 {-# LANGUAGE DeriveDataTypeable, RankNTypes, FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell #-}
 module LLVM.Parse (
     -- * Types
   ParserOptions(..),
@@ -43,7 +42,6 @@ import Data.Text ( Text )
 import Data.Typeable
 import qualified Data.Vector as V
 import Data.Word ( Word64 )
-import Debug.Trace.LocationTH
 import Foreign.Ptr
 import System.IO ( Handle, hSetBinaryMode )
 import System.IO.Unsafe ( unsafePerformIO )
@@ -332,7 +330,7 @@ translateType tp = do
   let ip = fromIntegral $ ptrToIntPtr tp
   res <- liftIO $ HT.lookup tm ip
   case res of
-    Nothing -> $failure ("No translation for type " ++ show tp)
+    Nothing -> error {- $failure -} ("No translation for type " ++ show tp)
     Just t -> return t
 
 recordValue :: ValuePtr -> Value -> KnotMonad ()
@@ -497,6 +495,7 @@ translateFunction finalState vp = do
                                   , functionName = name
                                   , functionMetadata = mds
                                   , functionUniqueId = uid
+                                  , functionLoops = [] --FIXME @Alisa
                                   }
                 return f')
 
@@ -956,10 +955,10 @@ translateInvokeInst finalState dataPtr name tt mds bb = do
 
   let n'' = case valueContent n' of
         BasicBlockC b -> b
-        _ -> $failure "Expected BasicBlock for normal invoke label"
+        _ -> error {-$failure-} "Expected BasicBlock for normal invoke label"
       u'' = case valueContent u' of
         BasicBlockC b -> b
-        _ -> $failure "Expected BasicBlock for unwind invoke label"
+        _ -> error {- $failure -} "Expected BasicBlock for unwind invoke label"
 
   return InvokeInst { _instructionName = n
                     , _instructionType = tt

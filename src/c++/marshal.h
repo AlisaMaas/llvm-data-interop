@@ -1,9 +1,13 @@
+/** 
+*  Word of warning: Don't include c++ header or source files in this files or use c++ syntax.
+*  For the purposes of this project, it is sometimes treated as a c header file, so the code
+*  within this file must be purely C code.
+**/ 
 #ifndef MARSHAL_H
 #define MARSHAL_H
 #endif
 #include <stdint.h>
 #include "llvm-base-enums.h"
-#include <llvm//Analysis/LoopInfo.h>
 
 typedef struct CValue_t CValue;
 typedef struct CMeta_t CMeta;
